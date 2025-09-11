@@ -15,7 +15,9 @@ static inline double f0(double x, double L) { // initial displacement u(x,0)
     return sin(M_PI * x / L);                 // try a half-sine
 }
 
-static inline double g0(double x) {           // initial velocity v(x,0) = u_t(x,0)
+static inline double g0(double x) {           
+    // initial velocity v(x,0) = u_t(x,0)
+    // currently zero
     return 0.0;
 }
 
@@ -27,8 +29,17 @@ static inline void apply_bc(double *u, double *v, const Params *P) {
     u[P->N] = 0.0;
 }
 
-// Discrete Laplacian at i using centred differences
+
 // TODO Make it 3D
+/**
+ * Computes the discrete Laplacian (second spatial derivative) at index i
+ * for a 1D array using central finite differences.
+ *
+ * @param u Pointer to the array of function values.
+ * @param i Index at which to compute the Laplacian (must have valid neighbors at i-1 and i+1).
+ * @param P Pointer to a Params structure containing the spatial grid spacing (dx).
+ * @return The computed Laplacian value at index i.
+ */
 static inline double lap1d(const double *u, int i, const Params *P) {
     return (u[i+1] - 2.0*u[i] + u[i-1]) / (P->dx * P->dx);
 }
@@ -127,20 +138,32 @@ int main(void) {
     apply_bc(u, v, &P);
 
     // time loop
+    FILE *fout = fopen("wave_output.dat", "w");
+    if (!fout) {
+        perror("fopen");
+        free(u); free(v);
+        free(k1u); free(k1v); free(k2u); free(k2v);
+        free(k3u); free(k3v); free(k4u); free(k4v);
+        free(utmp); free(vtmp);
+        return 1;
+    }
+
     for (int nstep = 0; nstep < steps; ++nstep) {
         rk4_step(u, v, dt, k1u,k1v, k2u,k2v, k3u,k3v, k4u,k4v, utmp,vtmp, &P);
 
         // (Optional) sample output every k steps
         if (nstep % 50 == 0) {
             double t = (nstep+1)*dt;
-            printf("# t = %.6f\n", t);
+            fprintf(fout, "# t = %.6f\n", t);
             for (int i = 0; i <= P.N; ++i) {
                 double x = i * P.dx;
-                printf("%.6f %.6f\n", x, u[i]);
+                fprintf(fout, "%.6f %.6f\n", x, u[i]);
             }
-            printf("\n");
+            fprintf(fout, "\n");
         }
     }
+
+    fclose(fout);
 
     free(u); free(v);
     free(k1u); free(k1v); free(k2u); free(k2v);
