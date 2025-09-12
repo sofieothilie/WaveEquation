@@ -56,5 +56,6 @@ dkms.conf
 
 # Div
 *.dat
-wave
 *.png
+wave
+heat
