@@ -181,9 +181,9 @@ void rk4_wave(const Params *P, float *u, float *v, float *u_tmp, float *v_tmp, d
 int main()
 {
     int nx = 30, ny = 30, nz = 30;
-    double xmin = 0.0, xmax = 10.0;
-    double ymin = 0.0, ymax = 10.0;
-    double zmin = 0.0, zmax = 10.0;
+    double xmin = -1.0, xmax = 1.0;
+    double ymin = -1.0, ymax = 1.0;
+    double zmin = -1.0, zmax = 1.0;
     double c = 1.0;
 
     Params P = {
