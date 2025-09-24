@@ -1,173 +1,221 @@
-// rk4_wave1d.c
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 
-typedef struct {
-    int    N;      // number of intervals -> N+1 grid points
-    double L;      // domain length
-    double c;      // wave speed
-    double dx;     // spatial step
+typedef struct
+{
+    int Nx, Ny, Nz;
+    double Lx, Ly, Lz;
+    double c;
+    double dx, dy, dz;
+    double xmin, ymin, zmin;
 } Params;
 
-// ---------- Problem setup (edit these to your liking) ----------
-static inline double f0(double x, double L) { // initial displacement u(x,0)
-    return sin(M_PI * x / L);                 // try a half-sine
-}
-
-static inline double g0(double x) {           
-    // initial velocity v(x,0) = u_t(x,0)
-    // currently zero
-    return 0.0;
-}
-
-// Apply Dirichlet BCs: fixed ends u(0,t)=u(L,t)=0
-// TODO 
-static inline void apply_bc(double *u, double *v, const Params *P) {
-    (void)v;               // velocity BC not strictly needed for Dirichlet u
-    u[0] = 0.0;
-    u[P->N] = 0.0;
-}
-
-
-// TODO Make it 3D
-/**
- * Computes the discrete Laplacian (second spatial derivative) at index i
- * for a 1D array using central finite differences.
- *
- * @param u Pointer to the array of function values.
- * @param i Index at which to compute the Laplacian (must have valid neighbors at i-1 and i+1).
- * @param P Pointer to a Params structure containing the spatial grid spacing (dx).
- * @return The computed Laplacian value at index i.
- */
-static inline double lap1d(const double *u, int i, const Params *P) {
-    return (u[i+1] - 2.0*u[i] + u[i-1]) / (P->dx * P->dx);
-}
-
-// Right-hand side of first-order system:
-// u_t = v
-// v_t = c^2 * u_xx
-static void rhs(const double *u, const double *v,
-                double *du, double *dv, const Params *P)
+static inline int get_index(const Params *P, int x, int y, int z)
 {
-    // interior
-    for (int i = 1; i < P->N; ++i) {
-        du[i] = v[i];
-        dv[i] = (P->c * P->c) * lap1d(u, i, P);
-    }
-    // boundaries: choose something consistent with apply_bc
-    du[0]   = 0.0; dv[0]   = 0.0;
-    du[P->N]= 0.0; dv[P->N]= 0.0;
+    return (z * P->Ny * P->Nx) + (y * P->Nx) + x;
 }
 
-// One RK4 step: (u,v) -> (u,v) + dt * Φ
-static void rk4_step(double *u, double *v, double dt,
-                     double *k1u, double *k1v,
-                     double *k2u, double *k2v,
-                     double *k3u, double *k3v,
-                     double *k4u, double *k4v,
-                     double *utmp, double *vtmp,
-                     const Params *P)
+// Laplacian at (i,j,k)
+double laplacian(const Params *P, float *arr, int i, int j, int k)
 {
-    // k1
-    rhs(u, v, k1u, k1v, P);
-
-    // k2: evaluate at (u + dt/2 k1u, v + dt/2 k1v)
-    for (int i = 0; i <= P->N; ++i) {
-        utmp[i] = u[i] + 0.5 * dt * k1u[i];
-        vtmp[i] = v[i] + 0.5 * dt * k1v[i];
-    }
-    apply_bc(utmp, vtmp, P);
-    rhs(utmp, vtmp, k2u, k2v, P);
-
-    // k3
-    for (int i = 0; i <= P->N; ++i) {
-        utmp[i] = u[i] + 0.5 * dt * k2u[i];
-        vtmp[i] = v[i] + 0.5 * dt * k2v[i];
-    }
-    apply_bc(utmp, vtmp, P);
-    rhs(utmp, vtmp, k3u, k3v, P);
-
-    // k4
-    for (int i = 0; i <= P->N; ++i) {
-        utmp[i] = u[i] + dt * k3u[i];
-        vtmp[i] = v[i] + dt * k3v[i];
-    }
-    apply_bc(utmp, vtmp, P);
-    rhs(utmp, vtmp, k4u, k4v, P);
-
-    // combine
-    for (int i = 0; i <= P->N; ++i) {
-        u[i] += (dt/6.0) * (k1u[i] + 2.0*k2u[i] + 2.0*k3u[i] + k4u[i]);
-        v[i] += (dt/6.0) * (k1v[i] + 2.0*k2v[i] + 2.0*k3v[i] + k4v[i]);
-    }
-    apply_bc(u, v, P);
+    int idx = get_index(P, i, j, k);
+    double lap = 0.0;
+    // Second-order central differences for 3D Laplacian
+    // d2u/dx2
+    lap += (arr[get_index(P, i + 1, j, k)] - 2 * arr[idx] + arr[get_index(P, i - 1, j, k)]) / (P->dx * P->dx);
+    // + d2u/dy2
+    lap += (arr[get_index(P, i, j + 1, k)] - 2 * arr[idx] + arr[get_index(P, i, j - 1, k)]) / (P->dy * P->dy);
+    // + d2u/dz2
+    lap += (arr[get_index(P, i, j, k + 1)] - 2 * arr[idx] + arr[get_index(P, i, j, k - 1)]) / (P->dz * P->dz);
+    return lap;
 }
 
-int main(void) {
-    Params P = { .N = 200, .L = 1.0, .c = 1.0 };
-    P.dx = P.L / P.N;
-
-    const double safety = 0.9;
-    const double dt = safety * P.dx / P.c;  // CFL-ish for 1-D
-    const double Tfinal = 2.0;
-    const int steps = (int)ceil(Tfinal / dt);
-
-    // allocate arrays
-    size_t n = (size_t)(P.N + 1);
-    double *u = calloc(n, sizeof *u);
-    double *v = calloc(n, sizeof *v);
-
-    // RK work arrays (reuse to avoid realloc every step)
-    double *k1u = calloc(n, sizeof *k1u), *k1v = calloc(n, sizeof *k1v);
-    double *k2u = calloc(n, sizeof *k2u), *k2v = calloc(n, sizeof *k2v);
-    double *k3u = calloc(n, sizeof *k3u), *k3v = calloc(n, sizeof *k3v);
-    double *k4u = calloc(n, sizeof *k4u), *k4v = calloc(n, sizeof *k4v);
-    double *utmp = calloc(n, sizeof *utmp), *vtmp = calloc(n, sizeof *vtmp);
-
-    if (!u||!v||!k1u||!k1v||!k2u||!k2v||!k3u||!k3v||!k4u||!k4v||!utmp||!vtmp) {
-        perror("calloc"); return 1;
-    }
-
-    // initial conditions
-    for (int i = 0; i <= P.N; ++i) {
-        double x = i * P.dx;
-        u[i] = f0(x, P.L);
-        v[i] = g0(x);
-    }
-    apply_bc(u, v, &P);
-
-    // time loop
-    FILE *fout = fopen("wave_output.dat", "w");
-    if (!fout) {
-        perror("fopen");
-        free(u); free(v);
-        free(k1u); free(k1v); free(k2u); free(k2v);
-        free(k3u); free(k3v); free(k4u); free(k4v);
-        free(utmp); free(vtmp);
-        return 1;
-    }
-
-    for (int nstep = 0; nstep < steps; ++nstep) {
-        rk4_step(u, v, dt, k1u,k1v, k2u,k2v, k3u,k3v, k4u,k4v, utmp,vtmp, &P);
-
-        // (Optional) sample output every k steps
-        if (nstep % 50 == 0) {
-            double t = (nstep+1)*dt;
-            fprintf(fout, "# t = %.6f\n", t);
-            for (int i = 0; i <= P.N; ++i) {
-                double x = i * P.dx;
-                fprintf(fout, "%.6f %.6f\n", x, u[i]);
+// Initial condition: Spherical outgoing wave, matches Python
+void set_initial_conditions(const Params *P, float *u, float *v)
+{
+    double c = P->c;
+    double eps = 1e-6;
+    for (int k = 0; k < P->Nz; k++)
+    {
+        double z = P->zmin + k * P->dz;
+        for (int j = 0; j < P->Ny; j++)
+        {
+            double y = P->ymin + j * P->dy;
+            for (int i = 0; i < P->Nx; i++)
+            {
+                double x = P->xmin + i * P->dx;
+                int idx = get_index(P, i, j, k);
+                double r = sqrt(x * x + y * y + z * z);
+                u[idx] = sin(10.0 * r) / (r + eps);
+                v[idx] = -c * cos(10.0 * r) / (r + eps); // du/dt at t=0
             }
-            fprintf(fout, "\n");
         }
     }
+}
 
-    fclose(fout);
+// Write 3D data to file
+void write_3d_data(const Params *P, float *arr, const char *filename)
+{
+    FILE *f = fopen(filename, "w");
+    if (!f)
+    {
+        perror("Failed to open file for writing");
+        return;
+    }
+    for (int k = 0; k < P->Nz; k++)
+    {
+        double z = P->zmin + k * P->dz;
+        for (int j = 0; j < P->Ny; j++)
+        {
+            double y = P->ymin + j * P->dy;
+            for (int i = 0; i < P->Nx; i++)
+            {
+                double x = P->xmin + i * P->dx;
+                int idx = get_index(P, i, j, k);
+                fprintf(f, "%f %f %f %f\n", x, y, z, arr[idx]);
+            }
+        }
+        fprintf(f, "\n");
+    }
+    fclose(f);
+}
 
-    free(u); free(v);
-    free(k1u); free(k1v); free(k2u); free(k2v);
-    free(k3u); free(k3v); free(k4u); free(k4v);
-    free(utmp); free(vtmp);
+// RK4 step for the wave equation
+void rk4_wave(const Params *P, float *u, float *v, float *u_tmp, float *v_tmp, double dt)
+{
+    int N = P->Nx * P->Ny * P->Nz;
+    float *ku1 = (float *)calloc(N, sizeof(float));
+    float *kv1 = (float *)calloc(N, sizeof(float));
+    float *ku2 = (float *)calloc(N, sizeof(float));
+    float *kv2 = (float *)calloc(N, sizeof(float));
+    float *ku3 = (float *)calloc(N, sizeof(float));
+    float *kv3 = (float *)calloc(N, sizeof(float));
+    float *ku4 = (float *)calloc(N, sizeof(float));
+    float *kv4 = (float *)calloc(N, sizeof(float));
+
+    // k1
+    for (int k = 1; k < P->Nz - 1; k++)
+    {
+        for (int j = 1; j < P->Ny - 1; j++)
+        {
+            for (int i = 1; i < P->Nx - 1; i++)
+            {
+                int idx = get_index(P, i, j, k);
+                ku1[idx] = v[idx];
+                kv1[idx] = P->c * P->c * laplacian(P, u, i, j, k);
+            }
+        }
+    }
+    // k2
+    for (int idx = 0; idx < N; idx++)
+    {
+        u_tmp[idx] = u[idx] + 0.5 * dt * ku1[idx];
+        v_tmp[idx] = v[idx] + 0.5 * dt * kv1[idx];
+    }
+    for (int k = 1; k < P->Nz - 1; k++)
+    {
+        for (int j = 1; j < P->Ny - 1; j++)
+        {
+            for (int i = 1; i < P->Nx - 1; i++)
+            {
+                int idx = get_index(P, i, j, k);
+                ku2[idx] = v_tmp[idx];
+                kv2[idx] = P->c * P->c * laplacian(P, u_tmp, i, j, k);
+            }
+        }
+    }
+    // k3
+    for (int idx = 0; idx < N; idx++)
+    {
+        u_tmp[idx] = u[idx] + 0.5 * dt * ku2[idx];
+        v_tmp[idx] = v[idx] + 0.5 * dt * kv2[idx];
+    }
+    for (int k = 1; k < P->Nz - 1; k++)
+    {
+        for (int j = 1; j < P->Ny - 1; j++)
+        {
+            for (int i = 1; i < P->Nx - 1; i++)
+            {
+                int idx = get_index(P, i, j, k);
+                ku3[idx] = v_tmp[idx];
+                kv3[idx] = P->c * P->c * laplacian(P, u_tmp, i, j, k);
+            }
+        }
+    }
+    // k4
+    for (int idx = 0; idx < N; idx++)
+    {
+        u_tmp[idx] = u[idx] + dt * ku3[idx];
+        v_tmp[idx] = v[idx] + dt * kv3[idx];
+    }
+    for (int k = 1; k < P->Nz - 1; k++)
+    {
+        for (int j = 1; j < P->Ny - 1; j++)
+        {
+            for (int i = 1; i < P->Nx - 1; i++)
+            {
+                int idx = get_index(P, i, j, k);
+                ku4[idx] = v_tmp[idx];
+                kv4[idx] = P->c * P->c * laplacian(P, u_tmp, i, j, k);
+            }
+        }
+    }
+    // Update u and v
+    for (int idx = 0; idx < N; idx++)
+    {
+        u[idx] += (dt / 6.0) * (ku1[idx] + 2 * ku2[idx] + 2 * ku3[idx] + ku4[idx]);
+        v[idx] += (dt / 6.0) * (kv1[idx] + 2 * kv2[idx] + 2 * kv3[idx] + kv4[idx]);
+    }
+
+    free(ku1);
+    free(kv1);
+    free(ku2);
+    free(kv2);
+    free(ku3);
+    free(kv3);
+    free(ku4);
+    free(kv4);
+}
+
+int main()
+{
+    int nx = 30, ny = 30, nz = 30;
+    double xmin = 0.0, xmax = 10.0;
+    double ymin = 0.0, ymax = 10.0;
+    double zmin = 0.0, zmax = 10.0;
+    double c = 1.0;
+
+    Params P = {
+        .Nx = nx, .Ny = ny, .Nz = nz, .Lx = xmax - xmin, .Ly = ymax - ymin, .Lz = zmax - zmin, .c = c, .xmin = xmin, .ymin = ymin, .zmin = zmin};
+    P.dx = P.Lx / (P.Nx - 1);
+    P.dy = P.Ly / (P.Ny - 1);
+    P.dz = P.Lz / (P.Nz - 1);
+
+    int N = P.Nx * P.Ny * P.Nz;
+    float *u = (float *)calloc(N, sizeof(float));
+    float *v = (float *)calloc(N, sizeof(float));
+    float *u_tmp = (float *)calloc(N, sizeof(float));
+    float *v_tmp = (float *)calloc(N, sizeof(float));
+
+    set_initial_conditions(&P, u, v);
+
+    double dt = 1.0 / 19.0; // time step
+    int steps = 20;
+
+    for (int s = 0; s < steps; s++)
+    {
+        char fname[64];
+        snprintf(fname, sizeof(fname), "timestep/wave3d_%03d.txt", s);
+        write_3d_data(&P, u, fname);
+        rk4_wave(&P, u, v, u_tmp, v_tmp, dt);
+    }
+
+    write_3d_data(&P, u, "output.txt");
+
+    free(u);
+    free(v);
+    free(u_tmp);
+    free(v_tmp);
     return 0;
 }
