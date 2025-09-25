@@ -34,7 +34,7 @@ double laplacian(const Params *P, float *arr, int i, int j, int k)
 void set_initial_conditions(const Params *P, float *u, float *v)
 {
     double c = P->c;
-    double eps = 1e-6;
+    double eps = 1e-6; // avoid dividing by 0 in centre.
     for (int k = 0; k < P->Nz; k++)
     {
         double z = k * P->dz - 0.5 * P->Lz;
@@ -47,7 +47,7 @@ void set_initial_conditions(const Params *P, float *u, float *v)
                 int idx = get_index(P, i, j, k);
                 double r = sqrt(x * x + y * y + z * z);
                 u[idx] = sin(10.0 * r) / (r + eps);
-                v[idx] = -c * cos(10.0 * r) / (r + eps); // du/dt at t=0
+                v[idx] = -10.0 * c * cos(10.0 * r) / (r + eps); // du/dt at t=0
             }
         }
     }
@@ -190,6 +190,20 @@ int main()
     P.dx = P.Lx / (P.Nx - 1);
     P.dy = P.Ly / (P.Ny - 1);
     P.dz = P.Lz / (P.Nz - 1);
+    
+    double dt = 1.0 / 19.0; // must be changed
+    int steps = 20;
+
+    // stability check
+    double cmax = sqrt(2);
+    double h = sqrt(1/(P.dx*P.dx) + 1/(P.dy*P.dy) + 1/(P.dz*P.dz));
+
+
+    if ((P.c * dt) / h > cmax)
+    {
+        printf("Unstable simulation. Exiting. \n");
+        return 0;
+    }
 
     int N = P.Nx * P.Ny * P.Nz;
     float *u = (float *)calloc(N, sizeof(float));
@@ -198,9 +212,6 @@ int main()
     float *v_tmp = (float *)calloc(N, sizeof(float));
 
     set_initial_conditions(&P, u, v);
-
-    double dt = 1.0 / 19.0;
-    int steps = 20;
 
     for (int s = 0; s < steps; s++)
     {
