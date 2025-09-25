@@ -8,7 +8,6 @@ typedef struct
     double Lx, Ly, Lz;
     double c;
     double dx, dy, dz;
-    double xmin, ymin, zmin;
 } Params;
 
 static inline int get_index(const Params *P, int x, int y, int z)
@@ -31,20 +30,20 @@ double laplacian(const Params *P, float *arr, int i, int j, int k)
     return lap;
 }
 
-// Initial condition: Spherical outgoing wave, matches Python
+// Initial condition: Spherical outgoing wave
 void set_initial_conditions(const Params *P, float *u, float *v)
 {
     double c = P->c;
     double eps = 1e-6;
     for (int k = 0; k < P->Nz; k++)
     {
-        double z = P->zmin + k * P->dz;
+        double z = k * P->dz - 0.5 * P->Lz;
         for (int j = 0; j < P->Ny; j++)
         {
-            double y = P->ymin + j * P->dy;
+            double y = j * P->dy - 0.5 * P->Ly;
             for (int i = 0; i < P->Nx; i++)
             {
-                double x = P->xmin + i * P->dx;
+                double x = i * P->dx - 0.5 * P->Lx;
                 int idx = get_index(P, i, j, k);
                 double r = sqrt(x * x + y * y + z * z);
                 u[idx] = sin(10.0 * r) / (r + eps);
@@ -65,13 +64,13 @@ void write_3d_data(const Params *P, float *arr, const char *filename)
     }
     for (int k = 0; k < P->Nz; k++)
     {
-        double z = P->zmin + k * P->dz;
+        double z = k * P->dz - 0.5 * P->Lz;
         for (int j = 0; j < P->Ny; j++)
         {
-            double y = P->ymin + j * P->dy;
+            double y = j * P->dy - 0.5 * P->Ly;
             for (int i = 0; i < P->Nx; i++)
             {
-                double x = P->xmin + i * P->dx;
+                double x = i * P->dx - 0.5 * P->Lx;
                 int idx = get_index(P, i, j, k);
                 fprintf(f, "%f %f %f %f\n", x, y, z, arr[idx]);
             }
@@ -180,14 +179,14 @@ void rk4_wave(const Params *P, float *u, float *v, float *u_tmp, float *v_tmp, d
 
 int main()
 {
-    int nx = 30, ny = 30, nz = 30;
-    double xmin = -1.0, xmax = 1.0;
-    double ymin = -1.0, ymax = 1.0;
-    double zmin = -1.0, zmax = 1.0;
-    double c = 1.0;
-
     Params P = {
-        .Nx = nx, .Ny = ny, .Nz = nz, .Lx = xmax - xmin, .Ly = ymax - ymin, .Lz = zmax - zmin, .c = c, .xmin = xmin, .ymin = ymin, .zmin = zmin};
+        .Nx = 30,
+        .Ny = 30,
+        .Nz = 30,
+        .Lx = 2.0,
+        .Ly = 2.0,
+        .Lz = 2.0,
+        .c = 1.0};
     P.dx = P.Lx / (P.Nx - 1);
     P.dy = P.Ly / (P.Ny - 1);
     P.dz = P.Lz / (P.Nz - 1);
@@ -200,7 +199,7 @@ int main()
 
     set_initial_conditions(&P, u, v);
 
-    double dt = 1.0 / 19.0; // time step
+    double dt = 1.0 / 19.0;
     int steps = 20;
 
     for (int s = 0; s < steps; s++)
@@ -210,8 +209,6 @@ int main()
         write_3d_data(&P, u, fname);
         rk4_wave(&P, u, v, u_tmp, v_tmp, dt);
     }
-
-    write_3d_data(&P, u, "output.txt");
 
     free(u);
     free(v);
