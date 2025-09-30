@@ -221,6 +221,10 @@ int main()
         rk4_wave(&P, u, v, u_tmp, v_tmp, dt);
     }
 
+    char fname[64];
+    snprintf(fname, sizeof(fname), "timestep/wave3d_%03d.txt", steps);
+    write_3d_data(&P, u, fname);
+
     free(u);
     free(v);
     free(u_tmp);
