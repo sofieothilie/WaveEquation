@@ -4,8 +4,7 @@
 
 #define dimx 8
 #define dimy 8
-#define dimz 8
-
+#define dimz 4
 
 typedef struct
 {
@@ -24,6 +23,11 @@ static inline __host__ __device__ int get_index(const Params *P, int x, int y, i
 // Laplacian at (i,j,k)
 __device__ double laplacian(const Params *P, float *arr, int i, int j, int k)
 {
+    if (i <= 0 || i >= P->Nx - 1 ||
+        j <= 0 || j >= P->Ny - 1 ||
+        k <= 0 || k >= P->Nz - 1)
+        return 0.0;
+    
     int idx = get_index(P, i, j, k);
     double lap = 0.0;
     // Second-order central differences for 3D Laplacian
@@ -87,40 +91,54 @@ void write_3d_data(const Params *P, float *arr, const char *filename)
     fclose(f);
 }
 
-static inline __device__ void get_coords(const Params *P, int *x_p, int *y_p, int* z_p){
+static inline __device__ int get_coords(const Params *P, int *x_p, int *y_p, int *z_p)
+{
     // Compute the offset in each dimension
     int x = blockDim.x * blockIdx.x + threadIdx.x;
     int y = blockDim.y * blockIdx.y + threadIdx.y;
     int z = blockDim.z * blockIdx.z + threadIdx.z;
-    if (*x_p >= P->Nx || *y_p >= P->Ny || *z_p >= P->Nz) return;
-    else{
-        x_p = &x;
-        y_p = &y;
-        z_p = &z;
+
+    if (x >= P->Nx || y >= P->Ny || z >= P->Nz)
+        return 0;
+
+    *x_p = x;
+    *y_p = y;
+    *z_p = z;
+    return 1;
+}
+
+__global__ void vec_add_uv(const Params *P, float *ku, float *kv, float *u, float *v)
+{
+    int x, y, z;
+    printf("hello\n");
+
+    if (get_coords(P, &x, &y, &z) == 0)
+    {
+        printf("out of bounds");
+        return; // Thread out of bounds
     }
-
-}
-
-__global__ void vec_add_uv(const Params *P, float *ku, float *kv, float* u, float *v){
-    int x, y, z;
-    get_coords(P, &x, &y, &z);
-    int idx = get_index(P, x, y, z); 
+    int idx = get_index(P, x, y, z);
+    printf("%i", idx);
     ku[idx] = v[idx];
-    kv[idx] = P->c*P->c*laplacian(P, u, x, y, z);
+    printf("inside gpu: ku[%i]: %f\n", idx, ku[idx]);
+    kv[idx] = P->c * P->c * laplacian(P, u, x, y, z);
+    printf("inside gpu: kv[%i]: %f\n", idx, kv[idx]);
 }
 
-__global__ void vec_add_rk(const Params *P, float *u, float *v, float *u_tmp, float *v_tmp, double dt, float *ku, float *kv){
+__global__ void vec_add_rk(const Params *P, float *u, float *v, float *u_tmp, float *v_tmp, double dt, float *ku, float *kv)
+{
     int x, y, z;
     get_coords(P, &x, &y, &z);
-    int idx = get_index(P, x, y, z); 
+    int idx = get_index(P, x, y, z);
     u_tmp[idx] = u[idx] + dt * ku[idx];
     v_tmp[idx] = v[idx] + dt * kv[idx];
 }
 
-__global__ void vec_add_frk(const Params *P, float *u, float *v, double dt, float *ku1, float* kv1, float *ku2, float *kv2, float *ku3, float *kv3, float *ku4, float *kv4){
+__global__ void vec_add_frk(const Params *P, float *u, float *v, double dt, float *ku1, float *kv1, float *ku2, float *kv2, float *ku3, float *kv3, float *ku4, float *kv4)
+{
     int x, y, z;
     get_coords(P, &x, &y, &z);
-    int idx = get_index(P, x, y, z); 
+    int idx = get_index(P, x, y, z);
     u[idx] += (dt / 6.0) * (ku1[idx] + 2 * ku2[idx] + 2 * ku3[idx] + ku4[idx]);
     v[idx] += (dt / 6.0) * (kv1[idx] + 2 * kv2[idx] + 2 * kv3[idx] + kv4[idx]);
 }
@@ -129,9 +147,9 @@ __global__ void vec_add_frk(const Params *P, float *u, float *v, double dt, floa
 void rk4_wave_parallelised(const Params *P, float *u, float *v, float *u_tmp, float *v_tmp, double dt)
 {
     dim3 block(dimx, dimy, dimz);
-    dim3 grid((P->Nx+dimx-1)/dimx, (P->Ny+dimy-1)/dimy, (P->Nz+dimz-1)/dimz); 
+    dim3 grid((P->Nx + dimx - 1) / dimx, (P->Ny + dimy - 1) / dimy, (P->Nz + dimz - 1) / dimz);
     int N = P->Nx * P->Ny * P->Nz;
-    int size = N*sizeof(float);
+    int size = N * sizeof(float);
     float *ku1;
     cudaMalloc(&ku1, size);
     float *kv1;
@@ -150,23 +168,22 @@ void rk4_wave_parallelised(const Params *P, float *u, float *v, float *u_tmp, fl
     cudaMalloc(&kv4, size);
 
     // k1
-    vec_add_uv<<<grid,block>>>(P, ku1, kv1, u, v);
+    vec_add_uv<<<grid, block>>>(P, ku1, kv1, u, v);
 
     // k2
-    vec_add_rk<<<grid,block>>>(P, u, v, u_tmp, v_tmp, 0.5 * dt, ku1, kv1);
-    vec_add_uv<<<grid,block>>>(P, ku2, kv2, u_tmp, v_tmp);
-
+    vec_add_rk<<<grid, block>>>(P, u, v, u_tmp, v_tmp, 0.5 * dt, ku1, kv1);
+    vec_add_uv<<<grid, block>>>(P, ku2, kv2, u_tmp, v_tmp);
 
     // k3
-    vec_add_rk<<<grid,block>>>(P, u, v, u_tmp, v_tmp, 0.5 * dt, ku2, kv2);
-    vec_add_uv<<<grid,block>>>(P, ku3, kv3, u_tmp, v_tmp);
+    vec_add_rk<<<grid, block>>>(P, u, v, u_tmp, v_tmp, 0.5 * dt, ku2, kv2);
+    vec_add_uv<<<grid, block>>>(P, ku3, kv3, u_tmp, v_tmp);
 
     // k4
-    vec_add_rk<<<grid,block>>>(P, u, v, u_tmp, v_tmp, dt, ku3, kv3);
-    vec_add_uv<<<grid,block>>>(P, ku4, kv4, u_tmp, v_tmp);
+    vec_add_rk<<<grid, block>>>(P, u, v, u_tmp, v_tmp, dt, ku3, kv3);
+    vec_add_uv<<<grid, block>>>(P, ku4, kv4, u_tmp, v_tmp);
 
     // Update u and v
-    vec_add_frk<<<grid,block>>>(P, u, v, dt, ku1, kv1, ku2, kv2, ku3, kv3, ku4, kv4);
+    vec_add_frk<<<grid, block>>>(P, u, v, dt, ku1, kv1, ku2, kv2, ku3, kv3, ku4, kv4);
 
     cudaFree(ku1);
     cudaFree(kv1);
@@ -191,14 +208,13 @@ int main()
     P.dx = P.Lx / (P.Nx - 1);
     P.dy = P.Ly / (P.Ny - 1);
     P.dz = P.Lz / (P.Nz - 1);
-    
-    int steps = 200;
+
+    int steps = 20;
     double dt = 1.0 / steps; // must be changed
 
     // stability check
     double cmax = sqrt(2);
-    double h = sqrt(1/(P.dx*P.dx) + 1/(P.dy*P.dy) + 1/(P.dz*P.dz));
-
+    double h = sqrt(1 / (P.dx * P.dx) + 1 / (P.dy * P.dy) + 1 / (P.dz * P.dz));
 
     if ((P.c * dt) / h > cmax)
     {
@@ -206,8 +222,12 @@ int main()
         return 0;
     }
 
+    Params *d_P;
+    cudaMalloc(&d_P, sizeof(Params));
+    cudaMemcpy(d_P, &P, sizeof(Params), cudaMemcpyHostToDevice);
+
     int N = P.Nx * P.Ny * P.Nz;
-    int size = N*sizeof(float);
+    int size = N * sizeof(float);
     float *h_u = (float *)calloc(N, sizeof(float));
     float *h_v = (float *)calloc(N, sizeof(float));
 
@@ -226,15 +246,18 @@ int main()
     float *d_v_tmp;
     cudaMalloc(&d_v_tmp, size);
 
+    system("mkdir -p timestep");
+
     for (int s = 0; s < steps; s++)
     {
-        //save results. Done before in order to also save init
+        // save results. Done before in order to also save init
         char fname[64];
         snprintf(fname, sizeof(fname), "timestep/wave3d_%03d.txt", s);
         write_3d_data(&P, h_u, fname);
 
-        //note, last timestep isn't written to file lol.
-        rk4_wave_parallelised(&P, d_u, d_v, d_u_tmp, d_v_tmp, dt);
+        // note, last timestep isn't written to file lol.
+        rk4_wave_parallelised(d_P, d_u, d_v, d_u_tmp, d_v_tmp, dt);
+        cudaDeviceSynchronize();
 
         cudaMemcpy(h_u, d_u, size, cudaMemcpyDeviceToHost);
         cudaMemcpy(h_v, d_v, size, cudaMemcpyDeviceToHost);
@@ -245,11 +268,11 @@ int main()
     snprintf(fname, sizeof(fname), "timestep/wave3d_%03d.txt", steps);
     write_3d_data(&P, h_u, fname);
 
-    //free host memory
+    // free host memory
     free(h_u);
     free(h_v);
 
-    //free device memory
+    // free device memory
     cudaFree(d_u);
     cudaFree(d_v);
     cudaFree(d_u_tmp);

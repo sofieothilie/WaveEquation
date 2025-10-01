@@ -15,3 +15,7 @@ run:
 
 gif:
 	gnuplot plot_animate.gp
+
+seq: buildseq run gif
+
+par: buildpar run gif

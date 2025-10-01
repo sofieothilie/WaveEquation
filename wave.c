@@ -190,9 +190,9 @@ int main()
     P.dx = P.Lx / (P.Nx - 1);
     P.dy = P.Ly / (P.Ny - 1);
     P.dz = P.Lz / (P.Nz - 1);
-    
-    double dt = 1.0 / 19.0; // must be changed
+
     int steps = 20;
+    double dt = 1.0 / steps;
 
     // stability check
     double cmax = sqrt(2);
