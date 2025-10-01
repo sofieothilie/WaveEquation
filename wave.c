@@ -212,6 +212,7 @@ int main()
     float *v_tmp = (float *)calloc(N, sizeof(float));
 
     set_initial_conditions(&P, u, v);
+    system("mkdir -p timestep");
 
     for (int s = 0; s < steps; s++)
     {
