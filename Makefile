@@ -8,7 +8,7 @@ buildpar:
 	nvcc -O3 -o wave wave_parallelised.cu
 
 clean:
-	rm wave timestep/*.txt
+	rm wave timestep/*.txt ; rmdir timestep
 
 run:
 	./wave
@@ -16,6 +16,6 @@ run:
 gif:
 	gnuplot plot_animate.gp
 
-seq: buildseq run gif
+seq: clean buildseq run gif
 
-par: buildpar run gif
+par: clean buildpar run gif

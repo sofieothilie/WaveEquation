@@ -27,7 +27,7 @@ __device__ double laplacian(const Params *P, float *arr, int i, int j, int k)
         j <= 0 || j >= P->Ny - 1 ||
         k <= 0 || k >= P->Nz - 1)
         return 0.0;
-    
+
     int idx = get_index(P, i, j, k);
     double lap = 0.0;
     // Second-order central differences for 3D Laplacian
@@ -112,7 +112,6 @@ __global__ void vec_add_uv(const Params *P, float *ku, float *kv, float *u, floa
     int x, y, z;
     if (get_coords(P, &x, &y, &z) == 0)
     {
-        printf("out of bounds");
         return; // Thread out of bounds
     }
     int idx = get_index(P, x, y, z);
@@ -123,7 +122,10 @@ __global__ void vec_add_uv(const Params *P, float *ku, float *kv, float *u, floa
 __global__ void vec_add_rk(const Params *P, float *u, float *v, float *u_tmp, float *v_tmp, double dt, float *ku, float *kv)
 {
     int x, y, z;
-    get_coords(P, &x, &y, &z);
+    if (get_coords(P, &x, &y, &z) == 0)
+    {
+        return; // Thread out of bounds
+    }
     int idx = get_index(P, x, y, z);
     u_tmp[idx] = u[idx] + dt * ku[idx];
     v_tmp[idx] = v[idx] + dt * kv[idx];
@@ -132,7 +134,10 @@ __global__ void vec_add_rk(const Params *P, float *u, float *v, float *u_tmp, fl
 __global__ void vec_add_frk(const Params *P, float *u, float *v, double dt, float *ku1, float *kv1, float *ku2, float *kv2, float *ku3, float *kv3, float *ku4, float *kv4)
 {
     int x, y, z;
-    get_coords(P, &x, &y, &z);
+    if (get_coords(P, &x, &y, &z) == 0)
+    {
+        return; // Thread out of bounds
+    }
     int idx = get_index(P, x, y, z);
     u[idx] += (dt / 6.0) * (ku1[idx] + 2 * ku2[idx] + 2 * ku3[idx] + ku4[idx]);
     v[idx] += (dt / 6.0) * (kv1[idx] + 2 * kv2[idx] + 2 * kv3[idx] + kv4[idx]);
@@ -162,23 +167,28 @@ void rk4_wave_parallelised(const Params *P, float *u, float *v, float *u_tmp, fl
     float *kv4;
     cudaMalloc(&kv4, size);
 
+    // Allocate device memory for Params
+    Params *d_P;
+    cudaMalloc(&d_P, sizeof(Params));
+    cudaMemcpy(d_P, P, sizeof(Params), cudaMemcpyHostToDevice);
+
     // k1
-    vec_add_uv<<<grid, block>>>(P, ku1, kv1, u, v);
+    vec_add_uv<<<grid, block>>>(d_P, ku1, kv1, u, v);
 
     // k2
-    vec_add_rk<<<grid, block>>>(P, u, v, u_tmp, v_tmp, 0.5 * dt, ku1, kv1);
-    vec_add_uv<<<grid, block>>>(P, ku2, kv2, u_tmp, v_tmp);
+    vec_add_rk<<<grid, block>>>(d_P, u, v, u_tmp, v_tmp, 0.5 * dt, ku1, kv1);
+    vec_add_uv<<<grid, block>>>(d_P, ku2, kv2, u_tmp, v_tmp);
 
     // k3
-    vec_add_rk<<<grid, block>>>(P, u, v, u_tmp, v_tmp, 0.5 * dt, ku2, kv2);
-    vec_add_uv<<<grid, block>>>(P, ku3, kv3, u_tmp, v_tmp);
+    vec_add_rk<<<grid, block>>>(d_P, u, v, u_tmp, v_tmp, 0.5 * dt, ku2, kv2);
+    vec_add_uv<<<grid, block>>>(d_P, ku3, kv3, u_tmp, v_tmp);
 
     // k4
-    vec_add_rk<<<grid, block>>>(P, u, v, u_tmp, v_tmp, dt, ku3, kv3);
-    vec_add_uv<<<grid, block>>>(P, ku4, kv4, u_tmp, v_tmp);
+    vec_add_rk<<<grid, block>>>(d_P, u, v, u_tmp, v_tmp, dt, ku3, kv3);
+    vec_add_uv<<<grid, block>>>(d_P, ku4, kv4, u_tmp, v_tmp);
 
     // Update u and v
-    vec_add_frk<<<grid, block>>>(P, u, v, dt, ku1, kv1, ku2, kv2, ku3, kv3, ku4, kv4);
+    vec_add_frk<<<grid, block>>>(d_P, u, v, dt, ku1, kv1, ku2, kv2, ku3, kv3, ku4, kv4);
 
     cudaFree(ku1);
     cudaFree(kv1);
@@ -188,6 +198,8 @@ void rk4_wave_parallelised(const Params *P, float *u, float *v, float *u_tmp, fl
     cudaFree(kv3);
     cudaFree(ku4);
     cudaFree(kv4);
+
+    cudaFree(d_P);
 }
 
 int main()
