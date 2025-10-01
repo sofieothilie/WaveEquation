@@ -110,19 +110,14 @@ static inline __device__ int get_coords(const Params *P, int *x_p, int *y_p, int
 __global__ void vec_add_uv(const Params *P, float *ku, float *kv, float *u, float *v)
 {
     int x, y, z;
-    printf("hello\n");
-
     if (get_coords(P, &x, &y, &z) == 0)
     {
         printf("out of bounds");
         return; // Thread out of bounds
     }
     int idx = get_index(P, x, y, z);
-    printf("%i", idx);
     ku[idx] = v[idx];
-    printf("inside gpu: ku[%i]: %f\n", idx, ku[idx]);
     kv[idx] = P->c * P->c * laplacian(P, u, x, y, z);
-    printf("inside gpu: kv[%i]: %f\n", idx, kv[idx]);
 }
 
 __global__ void vec_add_rk(const Params *P, float *u, float *v, float *u_tmp, float *v_tmp, double dt, float *ku, float *kv)
@@ -222,10 +217,6 @@ int main()
         return 0;
     }
 
-    Params *d_P;
-    cudaMalloc(&d_P, sizeof(Params));
-    cudaMemcpy(d_P, &P, sizeof(Params), cudaMemcpyHostToDevice);
-
     int N = P.Nx * P.Ny * P.Nz;
     int size = N * sizeof(float);
     float *h_u = (float *)calloc(N, sizeof(float));
@@ -256,7 +247,7 @@ int main()
         write_3d_data(&P, h_u, fname);
 
         // note, last timestep isn't written to file lol.
-        rk4_wave_parallelised(d_P, d_u, d_v, d_u_tmp, d_v_tmp, dt);
+        rk4_wave_parallelised(&P, d_u, d_v, d_u_tmp, d_v_tmp, dt);
         cudaDeviceSynchronize();
 
         cudaMemcpy(h_u, d_u, size, cudaMemcpyDeviceToHost);
